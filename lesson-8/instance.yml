@@ -1,0 +1,104 @@
+- name: initial stage build
+  hosts: stage
+  become: yes
+
+  vars:
+    repo_url: "https://github.com/boxfuse/boxfuse-sample-java-war-hello.git"
+    workdir: "/app"
+    outdir: "/app"
+    artifact_src: "/app/target/hello-1.0.war"
+    artifact_name: "hello-1.0.war"
+    java_package: openjdk-11-jdk
+
+  tasks:
+    - name: install jdk
+      apt:
+        name:
+          - "{{ java_package }}"
+          - maven
+          - git
+        state: present
+
+    - name: create working directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ workdir }}"
+        - "{{ outdir }}"
+
+    - name: clone repository from git
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ workdir }}"
+        version: "master"
+
+    - name: maven package
+      command: mvn -B clean package -DskipTests
+      args:
+        chdir: "{{ workdir }}"
+
+    - name: copy artifact
+      copy:
+        src: "{{ artifact_src }}"
+        dest: "{{ outdir }}/{{ artifact_name }}"
+        remote_src: true
+        mode: "0644"
+
+    - name: fetch artifact to controller
+      fetch:
+        src: "{{ artifact_src }}"
+        dest: "{{ playbook_dir }}/artifacts/"
+        flat: true
+
+    - name: build completed message
+      debug:
+        msg: "Stage build is completed"
+
+- name: initial prod
+  hosts: prod
+  become: yes
+  vars:
+    artifact_name: "hello-1.0.war"
+    artifact_dest: "{{ playbook_dir }}/artifacts/{{ artifact_name }}"
+    tomcat_package: tomcat10
+    tomcat_service: tomcat10
+    tomcat_web: "/var/lib/tomcat10/webapps"
+
+  tasks:
+    - name: run tomcat
+      apt:
+        name:
+          - openjdk-11-jre
+          - "{{ tomcat_package }}"
+        state: present
+
+    - name: copy artefact to tomcat
+      copy:
+        src: "{{ artifact_dest }}"
+        dest: "{{ tomcat_web }}/{{ artifact_name }}"
+        owner: tomcat
+        group: tomcat
+        mode: "0644"
+
+    - name: start tomcat
+      service:
+        name: "{{ tomcat_service }}"
+        state: started
+        enabled: true
+
+    - name: health check
+      wait_for:
+        port: 8080
+        state: started
+        delay: 2
+        timeout: 60
+
+    - name: check webresource
+      uri:
+        url: "http://54.160.166.156:8080/"
+        return_content: true
+      register: home
+
+
